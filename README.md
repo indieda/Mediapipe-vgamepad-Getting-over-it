@@ -16,10 +16,14 @@ It supports **real-time joystick control with your right hand** and **record + r
 
 ## 📦 Installation
 
-```bash
 # 1. Create env
-conda create -n gesture-pad python=3.9
+conda create -n gesture-pad python=3.10
 conda activate gesture-pad
 
 # 2. Install dependencies
 pip install -r requirements.txt
+
+# 3. (Windows only) Install ViGEmBus Driver
+- Search **"ViGEmBus Driver Nefarius"**
+- Download and install the official package (requires admin privileges)
+- Restart Windows after installation

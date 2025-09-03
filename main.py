@@ -3,7 +3,17 @@ from collections import deque
 import numpy as np
 import cv2
 import mediapipe as mp
-from vgamepad import VX360Gamepad
+# 可选导入 vgamepad：在 macOS 上不存在，降级为空实现
+try:
+    from vgamepad import VX360Gamepad as _VX360Gamepad
+    _GAMEPAD_AVAILABLE = True
+except Exception:
+    _GAMEPAD_AVAILABLE = False
+    class _VX360Gamepad:
+        def __init__(self): pass
+        def left_joystick(self, x_value=0, y_value=0): pass
+        def update(self): pass
+    print("[警告] vgamepad 在当前平台不可用，已启用空实现（不会真正输出手柄事件）。")
 
 # ================== 参数 ==================
 H_FLIP               = True
@@ -41,7 +51,7 @@ mp_pose   = mp.solutions.pose
 mp_hands  = mp.solutions.hands
 mp_draw   = mp.solutions.drawing_utils
 mp_style  = mp.solutions.drawing_styles
-gamepad   = VX360Gamepad()
+gamepad   = _VX360Gamepad()
 
 cap = cv2.VideoCapture(0)
 cap.set(3, 640); cap.set(4, 480)

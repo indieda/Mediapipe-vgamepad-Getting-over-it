@@ -15,10 +15,48 @@ except Exception:
         def update(self): pass
     print("[警告] vgamepad 在当前平台不可用，已启用空实现（不会真正输出手柄事件）。")
 
+# 可选导入 arm_kinematics_viz：仅做可用性自检（不影响主流程）
+try:
+    import arm_kinematics_viz as _akv
+    try:
+        _akv.ArmKinematicsVisualizer().update_and_render(points=None, now=time.time())
+        _AKV_AVAILABLE = True
+        print("[信息] arm_kinematics_viz 模块可用（自检通过）。")
+    except Exception as e:
+        _AKV_AVAILABLE = False
+        print(f"[警告] arm_kinematics_viz 导入成功但自检失败：{e}")
+except Exception as e:
+    _AKV_AVAILABLE = False
+    print(f"[警告] 无法导入 arm_kinematics_viz：{e}")
+
+
+def start_arm_viz(cam: int = 0,
+                  width: int = 640,
+                  height: int = 480,
+                  flip: bool = True,
+                  history_sec: float = 6.0,
+                  panel_size=(800, 540),
+                  window_name: str = 'Arm Kinematics Viz (press q to quit)') -> int:
+    """
+    在 main.py 中以最低耦合方式启动“手臂运动学可视化”。
+    仅在显式调用时才会导入并运行，不影响当前主流程。
+    返回值：0 表示正常退出；非 0 表示初始化失败（如相机无法打开）。
+    """
+    from run_arm_viz import run_arm_viz as _run_arm_viz
+    return _run_arm_viz(cam=cam, width=width, height=height, flip=flip,
+                        history_sec=history_sec, panel_size=panel_size,
+                        window_name=window_name)
+
 # ================== 参数 ==================
 H_FLIP               = True
 RATE_LIMIT_HZ        = 240
 STICK_MAX            = 32000
+
+# —— 额外HUD：Arm Kinematics 可视化（第二窗口） ——
+AKV_HUD              = True           # 同时显示第二个窗口（基于 arm_kinematics_viz）
+AKV_HISTORY_SEC      = 6.0
+AKV_PANEL_SIZE       = (800, 540)
+AKV_WINDOW_NAME      = 'Arm Kinematics Viz (press q to quit)'
 
 # —— 右手：实时控制（速度→摇杆；受“手型开关”门控） ——
 RIGHT_HISTORY_SEC    = 0.20
@@ -55,6 +93,16 @@ gamepad   = _VX360Gamepad()
 
 cap = cv2.VideoCapture(0)
 cap.set(3, 640); cap.set(4, 480)
+
+# Arm Kinematics Visualizer (second HUD) instance
+akv_viz = None
+if AKV_HUD and _AKV_AVAILABLE:
+    try:
+        akv_viz = _akv.ArmKinematicsVisualizer(history_sec=AKV_HISTORY_SEC, panel_size=AKV_PANEL_SIZE)
+        print(f"[信息] 第二窗口已启用：{AKV_WINDOW_NAME}  大小={AKV_PANEL_SIZE}, history={AKV_HISTORY_SEC}s")
+    except Exception as e:
+        akv_viz = None
+        print(f"[警告] 创建 ArmKinematicsVisualizer 失败：{e}")
 
 # 右手：实时控制历史与EMA
 r_hist = deque()
@@ -312,6 +360,16 @@ with mp_pose.Pose(static_image_mode=False, min_detection_confidence=0.5, model_c
             cv2.putText(frame, f"Right=open -> control (gated by {GESTURE_HAND_LABEL}) | Left up -> record 8s -> replay",
                         (10, 74), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255,255,255), 2)
 
+        if akv_viz is not None:
+            # Build points for ArmKinematicsVisualizer from current MediaPipe Pose result
+            try:
+                akv_points = _akv.extract_points_from_mediapipe(res_pose)
+            except Exception:
+                akv_points = None
+            lw_pt = (lw_x, lw_y) if (lw_x is not None and lw_y is not None) else None
+            rw_pt = (rw_x, rw_y) if (rw_x is not None and rw_y is not None) else None
+            panel = akv_viz.update_and_render(points=akv_points, now=now_t, lw=lw_pt, rw=rw_pt)
+            cv2.imshow(AKV_WINDOW_NAME, panel)
         cv2.imshow("Control gated by other hand open/close (q to quit)", frame)
 
 cap.release()

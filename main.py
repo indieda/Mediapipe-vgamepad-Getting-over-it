@@ -91,8 +91,16 @@ mp_draw   = mp.solutions.drawing_utils
 mp_style  = mp.solutions.drawing_styles
 gamepad   = _VX360Gamepad()
 
-cap = cv2.VideoCapture(0)
-cap.set(3, 640); cap.set(4, 480)
+# The path to your video file
+video_path = 'path/to/your/video.mp4' 
+cap = cv2.VideoCapture(video_path)
+
+# cap = cv2.VideoCapture(0)
+# cap.set(3, 640); cap.set(4, 480)
+
+# You NO LONGER need cap.set() for a pre-recorded video.
+# The video's resolution is already fixed. These lines will have no effect.
+
 
 # Arm Kinematics Visualizer (second HUD) instance
 akv_viz = None

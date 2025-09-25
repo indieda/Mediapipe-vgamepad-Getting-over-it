@@ -53,15 +53,27 @@ def run_arm_viz(cam: int = 0,
     # Initialize visualizer panel (rendered independently of the camera frame)
     viz = akv.ArmKinematicsVisualizer(history_sec=history_sec, panel_size=panel_size)
 
-    # Camera
-    cap = cv2.VideoCapture(cam)
-    if not cap.isOpened():
-        print(f"[ERROR] Cannot open camera index {cam}.")
-        return 1
-    if width:
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-    if height:
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+    # The path to your video file
+    video_path = 'path/to/your/video.mp4' 
+    cap = cv2.VideoCapture(video_path)
+
+    # cap = cv2.VideoCapture(0)
+    # cap.set(3, 640); cap.set(4, 480)
+
+    # You NO LONGER need cap.set() for a pre-recorded video.
+    # The video's resolution is already fixed. These lines will have no effect.
+######################################################################################
+# Uncomment this section to use live webcam.
+    ## Camera
+    #cap = cv2.VideoCapture(cam)
+    # if not cap.isOpened():
+    #     print(f"[ERROR] Cannot open camera index {cam}.")
+    #     return 1
+    # if width:
+    #     cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+    # if height:
+    #     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+######################################################################################
 
     # MediaPipe Pose (optional fallback if unavailable)
     if _HAVE_MP:

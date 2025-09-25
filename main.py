@@ -78,9 +78,6 @@ RIGHT_DEADZONE_SPD   = 0.0008
 INVERT_X             = False
 INVERT_Y             = True
 
-#TODO: Setup a calibration step here to allow for the setting of the minimum and maximum values here.
-RW_BOUNDS = RS_BOUNDS = LW_BOUNDS = LS_BOUNDS = (0.5,0.9) 
-
 # —— Recording→burst replay (triggered by left hand raised) ——
 HAND_UP_MARGIN       = 0.03          # Wrist y < Shoulder y - margin means hand is raised
 RECORD_SEC           = 8.0           # ★ 8 seconds
@@ -102,7 +99,7 @@ HUD                  = True
 # ===== Calibration HUD settings =====
 CALIB_ENABLED = True                 # show calibration circle until completed
 CALIB_POINTS = 32                    # number of dotted points around circle
-CALIB_RADIUS_RATIO = 0.25            # radius relative to min(frame_w,frame_h)
+CALIB_RADIUS_RATIO = 0.35            # radius relative to min(frame_w,frame_h)
 CALIB_TOL_PIX = 40                   # tolerance (pixels) from ideal circle to count as visited
 CALIB_COMPLETE_THRESHOLD = 0.85      # fraction of points that must be visited to finish
 
@@ -162,9 +159,9 @@ def clamp(v, lo, hi): return max(lo, min(hi, v))
 
 def vel_to_stick(vx, vy):
     spd = math.hypot(vx, vy)
-    #TODO if spd < RIGHT_DEADZONE_SPD: return 0, 0
+    if spd < RIGHT_DEADZONE_SPD: return 0, 0
     ux, uy = vx/(spd+1e-9), vy/(spd+1e-9) # +1e-9 to avoid div0 error
-    mag = STICK_MAX * math.tanh(2000.0 * spd) #TODO math.tanh(200.0*spd)
+    mag = STICK_MAX * math.tanh(200.0 * spd)
     sx, sy = ux*mag, uy*mag
     if INVERT_X: sx = -sx
     if INVERT_Y: sy = -sy
@@ -295,13 +292,6 @@ def hand_is_open(hands_res, img_w, img_h, target_label='Left'):
 
     return gesture_open_state
 
-def normalize_in_bounds(landmarkCoordinateValue, lo = None, hi = None):
-    #TODO: Currently it's just a passthrough. Define lo and hi by the Left/Right and Wrist/Shoulder.
-    # return (landmarkCoordinateValue - LW_BOUNDS[0]) / (LW_BOUNDS[1] - LW_BOUNDS[0])
-    return landmarkCoordinateValue
-
-x_array_circles = (32767//2) * np.cos(np.linspace(0,2*np.pi,1000))
-y_array_circles = (32767//2) * np.sin(np.linspace(0,2*np.pi,1000))
 
 # ================== Main loop ==================
 # MediaPipe initialization: one for pose, another for hands.
@@ -325,8 +315,8 @@ with mp_pose.Pose(static_image_mode=False, min_detection_confidence=0.5, model_c
         
         # If Mediapipe Pose detected a person, extract post landmarks and left/right wrist
         mp_pose_present = res_pose.pose_landmarks is not None
-        # Initialize empty wrist positions
-        rw_x = rw_y = lw_x = lw_y = 0.5 #None #TODO
+        # Initialize empty wrist positions in the centre of the frame at the start.
+        rw_x = rw_y = lw_x = lw_y = 0.5 #TODO: Check if None would be better for the logic below.
         # Initialize left-hand-up flag
         l_hand_up = False
 
@@ -341,24 +331,18 @@ with mp_pose.Pose(static_image_mode=False, min_detection_confidence=0.5, model_c
                 # This gives us the index of the right wrist and right shoulder in the landmark list.
                 R_WRIST, R_SHOUL = mp_pose.PoseLandmark.RIGHT_WRIST, mp_pose.PoseLandmark.RIGHT_SHOULDER
                 L_WRIST, L_SHOUL = mp_pose.PoseLandmark.LEFT_WRIST,  mp_pose.PoseLandmark.LEFT_SHOULDER
-                #print("R_WRIST =",R_WRIST, "R_SHOUL =", R_SHOUL, "L_WRIST =", L_WRIST, "L_SHOUL =", L_SHOUL)
 
             # This gives an x, y, z, visibility coordinate for each landmark, according to the image's width and height. y seems to go beyond 1.0 somtimes. Larger y means higher. Larger x means more right.
             RW, RS = landmark[R_WRIST], landmark[R_SHOUL]
             LW, LS = landmark[L_WRIST], landmark[L_SHOUL]
-            #print(landmark)
-            #print("RW:",RW, "\n", "RS:", RS,"\n", "LW:", LW,"\n", "LS:", LS,"\n")
+
             
             # As a sanity check, only use the wrist coordinates when both wrist and shoulder have visibility > 0.5. Otherwise, the wrist is probably out of the frame.
             if getattr(RW,"visibility",1.0)>0.5 and getattr(RS,"visibility",1.0)>0.5:
-                rw_x, rw_y = normalize_in_bounds(float(RW.x)), normalize_in_bounds(float(RW.y))
+                rw_x, rw_y = float(RW.x), float(RW.y)
             if getattr(LW,"visibility",1.0)>0.5 and getattr(LS,"visibility",1.0)>0.5:
-                lw_x, lw_y = normalize_in_bounds(float(LW.x)), normalize_in_bounds(float(LW.y))
+                lw_x, lw_y = float(LW.x), float(LW.y)
                 l_hand_up  = (lw_y < (float(LS.y) - HAND_UP_MARGIN))
-
-            if i%6 == 0:
-                print(i)
-                print("rw_x",rw_x, "\n", "rw_y", rw_y,"\n", "lw_x", lw_x,"\n", "lw_y", lw_y,"\n")
 
             #By default, we have HUD to show the webcam stream with overlays of the pose skeleton and key landmarks
             if HUD:
@@ -375,7 +359,7 @@ with mp_pose.Pose(static_image_mode=False, min_detection_confidence=0.5, model_c
             now_t = time.time()
 
              # ----------------- Calibration logic (mark visited sectors) -----------------
-            if CALIB_ENABLED and not calib_done:
+            if CALIB_ENABLED: #and not calib_done: #TODO Currently doesn't remove calibration screen: 
                 # compute center & radius in pixels
                 cx, cy = w // 2, h // 2
                 radius = int(min(w, h) * CALIB_RADIUS_RATIO)
@@ -423,82 +407,71 @@ with mp_pose.Pose(static_image_mode=False, min_detection_confidence=0.5, model_c
                 visited_frac = sum(1 for v in calib_visited if v) / float(CALIB_POINTS)
                 if visited_frac >= CALIB_COMPLETE_THRESHOLD:
                     calib_done = True
-                    print("[INFO] Calibration complete.")
+                    #Print only one time when calibration is done.
+                    if calib_done == False:
+                        print("[INFO] Calibration complete.")
                     # optional: you can store calib_center/calib_radius for later use
 
             # ----------------- end calibration logic -----------------
 
-            # TODO: Feature not implemented correctly! Left hand: raise shoulder triggers recording right hand trajectory (no output during recording) =====
+            # Left hand: raise Left wrist triggers recording right hand trajectory (no output during recording) =====
             if state == "IDLE":
-                if l_hand_up and (rw_x is not None):
-                    #TODO: Silenced the RECORD and REPLAY portions below for now to debug.
-                    record_buf = [(now_t, rw_x, rw_y)]; rec_t0 = now_t
-                    pass#state = "RECORD"; record_buf = [(now_t, rw_x, rw_y)]; rec_t0 = now_t
+                # Check that the left hand is raised and the left hand is closed to start recording.
+                if l_hand_up and not hand_open and (rw_x is not None):
+                    #record_buf = [(now_t, rw_x, rw_y)]; rec_t0 = now_t
+                    state = "RECORD"; record_buf = [(now_t, rw_x, rw_y)]; rec_t0 = now_t
 
-        elif state == "RECORD":
-            if rw_x is not None:
-                record_buf.append((now_t, rw_x, rw_y))
+            elif state == "RECORD":
+                print(now_t - rec_t0)
+                if rw_x is not None:
+                    record_buf.append((now_t, rw_x, rw_y))
+                else:
+                    if record_buf:
+                        lt, lx, ly = record_buf[-1]
+                        record_buf.append((now_t, lx, ly))
+                if (now_t - rec_t0) >= RECORD_SEC:
+                    state = "REPLAY"
+
+            # Releases the recorded trajectory to joystick output
+            elif state == "REPLAY":
+                replay_trajectory(record_buf, compress=REPLAY_COMPRESS, gain=REPLAY_GAIN)
+                state = "IDLE"; record_buf = []; rec_t0 = None
+
+        # =====  Right hand: real-time control (only outputs when not recording/replaying and selected hand is open) =====
+            if state == "IDLE" and rw_x is not None and hand_open is not None and hand_open:
+                # Direct mapping from right hand position to joystick (position control)
+                gain = 2  # increase to make position control stronger
+                sx = int(clamp(((rw_x - 0.5) / 0.5) * STICK_MAX * gain, -STICK_MAX, STICK_MAX))
+                sy = int(clamp(-((rw_y - 0.5) / 0.5) * STICK_MAX * gain, -STICK_MAX, STICK_MAX))
+                gamepad.left_joystick(x_value=sx, y_value=sy); gamepad.update()
+                print(f"Joystick updated: x={sx}, y={sy}")
+
+                # Append current right hand position to history/stack here.
+                r_hist.append((now_t, rw_x, rw_y))
+                # Pop out the old history points beyond the time window.
+                while r_hist and (now_t - r_hist[0][0]) > RIGHT_HISTORY_SEC:
+                    r_hist.popleft()
+                # Deprecated for the old feature of calculating velocity and using velocity to control joystick.
+                # if len(r_hist) >= 2:
+                #     rvx, rvy = estimate_velocity(r_hist) # TODO: This gives us the velocity of the right x and right y.
+                #     rvx_ema = RIGHT_SMOOTH_ALPHA*rvx + (1-RIGHT_SMOOTH_ALPHA)*rvx_ema #TODO: These are moving averages...?
+                #     rvy_ema = RIGHT_SMOOTH_ALPHA*rvy + (1-RIGHT_SMOOTH_ALPHA)*rvy_ema
+                #     spd = math.hypot(rvx_ema, rvy_ema)
+                #     now_tick = time.perf_counter()
+                #     if now_tick >= next_tick:
+                #         next_tick = now_tick + (1.0 / RATE_LIMIT_HZ)
+                #         if spd > RIGHT_VEL_THRESH:
+                #             sx, sy = vel_to_stick(rvx_ema, rvy_ema)
+                #         else:
+                #             sx, sy = 0, 0
+                #         # Set the left_joystick x and y values, then send them out to the joystick.
+                #         print("Updated with the following sx and sy values:",sx,sy)
+                #         gamepad.left_joystick(x_value=sx, y_value=sy); gamepad.update() #TODO: fix this for speed adjustments...
             else:
-                if record_buf:
-                    lt, lx, ly = record_buf[-1]
-                    record_buf.append((now_t, lx, ly))
-            if (now_t - rec_t0) >= RECORD_SEC:
-                pass#state = "REPLAY"
-
-        # Releases the recorded trajectory to joystick output
-        elif state == "REPLAY":
-            replay_trajectory(record_buf, compress=REPLAY_COMPRESS, gain=REPLAY_GAIN)
-            state = "IDLE"; record_buf = []; rec_t0 = None
-
-    # =====#TODO  by default, this is Left, not Right hand. Right hand: real-time control (only outputs when not recording/replaying and selected hand is open) =====
-        # if state == "IDLE" and rw_x is not None and hand_open is not None and hand_open:
-        #     # Append current right hand position to history/stack here.
-        #     r_hist.append((now_t, rw_x, rw_y))
-        #     while r_hist and (now_t - r_hist[0][0]) > RIGHT_HISTORY_SEC:
-        #         r_hist.popleft()
-        #     if len(r_hist) >= 2:
-        #         rvx, rvy = estimate_velocity(r_hist) # TODO: This gives us the velocity of the right x and right y.
-        #         rvx_ema = RIGHT_SMOOTH_ALPHA*rvx + (1-RIGHT_SMOOTH_ALPHA)*rvx_ema #TODO: These are moving averages...?
-        #         rvy_ema = RIGHT_SMOOTH_ALPHA*rvy + (1-RIGHT_SMOOTH_ALPHA)*rvy_ema
-        #         spd = math.hypot(rvx_ema, rvy_ema)
-        #         now_tick = time.perf_counter()
-        #         if now_tick >= next_tick:
-        #             next_tick = now_tick + (1.0 / RATE_LIMIT_HZ)
-        #             if spd > RIGHT_VEL_THRESH:
-        #                 sx, sy = vel_to_stick(rvx_ema, rvy_ema)
-        #             else:
-        #                 sx, sy = 0, 0
-        #             # Set the left_joystick x and y values, then send them out to the joystick.
-        #             # print("Updated with the following sx and sy values:",sx,sy)
-        #             # ORIGINAL: 
-        #             #gamepad.left_joystick(x_value=sx, y_value=sy); gamepad.update() #TODO: fix this for speed adjustments...
-        #             # if i%6 == 0:
-        #             #     print("Positives")
-        #             #     gamepad.left_joystick(x_value=int(0.8*32768 ), y_value=int(0.8*32768 )); gamepad.update()
-        #             # elif i%6 == 3:
-        #             #     print("Negatives")
-        #             #     gamepad.left_joystick(x_value=int(-0.8*32768 ), y_value=int(-0.8*32768 )); gamepad.update()
-        #             #gamepad.left_joystick(x_value=int(((rw_x-0.5)/0.5)*32767 ), y_value=int(-((rw_y-0.5)/0.5)*32767 )); gamepad.update()
-        #             gamepad.left_joystick(x_value=int(x_array_circles[i]), y_value=int(y_array_circles[i])); gamepad.update()
-        #             print(f"Joystick updated: x={x_array_circles[i]}, y={y_array_circles[i]}")
-        # else:
-        #     # If output conditions not met or during recording/replay: can add smooth return to zero here
-        #     pass
-        #x_sample = [0, 16000, 32000, 16000, 0, -16000, -32000, -16000, 0]
-        #y_sample = [32000, 16000, 0, -16000, -32000, -16000, 0, 16000, 32000]
-        #gamepad.left_joystick(x_value=int(x_sample[i%9]), y_value=int(y_sample[i%9])); gamepad.update()
-        #print(f"Joystick updated: x={x_sample[i%9]}, y={y_sample[i%9]}")
-
-
-        # gamepad.left_joystick(x_value=int(((rw_x-0.5)/0.5)*32767 ), y_value=int(-((rw_y-0.5)/0.5)*32767 )); gamepad.update()
-        # print(f"Joystick updated: x={int(-((rw_x-0.5)/0.5)*32767 )}, y={int(-((rw_y-0.5)/0.5)*32767 )}")
+                # If output conditions not met or during recording/replay: can add smooth return to zero here
+                pass
+            
         
-        gain = 5  # increase to make position control stronger
-        sx = int(clamp(((rw_x - 0.5) / 0.5) * STICK_MAX * gain, -STICK_MAX, STICK_MAX))
-        sy = int(clamp(-((rw_y - 0.5) / 0.5) * STICK_MAX * gain, -STICK_MAX, STICK_MAX))
-        gamepad.left_joystick(x_value=sx, y_value=sy); gamepad.update()
-        print(f"Joystick updated: x={sx}, y={sy}")
-
         # ===== Displays information on the top left corner of the HUD =====
         if HUD:
             open_txt = "?" if hand_open is None else ("Y" if hand_open else "n")

@@ -389,9 +389,20 @@ with mp_pose.Pose(static_image_mode=False, min_detection_confidence=0.5, model_c
                     color = (0, 200, 0) if calib_visited[idx] else (200, 200, 255)
                     cv2.circle(frame, (px, py), 4, color, -1)
 
-                # instruction text
-                inst = "Wave your right hand in a circle to calibrate. Cover the dotted ring."
-                cv2.putText(frame, inst, (10, h - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,255,255), 2)
+                # instruction text (render multiple lines so text doesn't overflow past the frame)
+                inst = "Wave your right hand in a circle to calibrate.\nCover the dotted ring."
+                # Split lines and draw each one with proper vertical spacing
+                lines = inst.splitlines()
+                font = cv2.FONT_HERSHEY_SIMPLEX
+                font_scale = 0.6
+                thickness = 2
+                # compute text height from a sample line
+                (text_w, text_h), baseline = cv2.getTextSize(lines[0], font, font_scale, thickness)
+                line_spacing = 6  # pixels between lines
+                # draw lines from bottom up so the bottom-most line is at h - 20
+                for i, line in enumerate(reversed(lines)):
+                    y = h - 20 - i * (text_h + line_spacing)
+                    cv2.putText(frame, line, (10, y), font, font_scale, (255,255,255), thickness, cv2.LINE_AA)
 
                 # if we have a valid right-wrist, mark nearby sectors visited
                 if rw_x is not None and rw_y is not None:

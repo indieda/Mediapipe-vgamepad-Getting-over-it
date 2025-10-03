@@ -115,6 +115,12 @@ LEFT_HOVER_RADIUS_PX  = 26           # visual circle radius
 LEFT_HOVER_TOL_PIX    = 50           # distance threshold to consider hovered (center to wrist)
 LEFT_HOVER_LABEL      = 'Left hover'
 
+# ===== Window layout options =====
+AUTO_TILE_WINDOWS     = True         # Attempt to tile the game window and this OpenCV window side-by-side (Windows only)
+TILE_LEFT_TITLE_SUB   = "Getting Over It"   # substring of the game window title
+TILE_RIGHT_TITLE_SUB  = "Waving Over It"    # substring of this OpenCV window title
+TILE_GAP_PIX          = 0             # gap between the two windows
+
 # ================== Initialization ==================
 mp_pose   = mp.solutions.pose
 mp_hands  = mp.solutions.hands
@@ -127,7 +133,7 @@ gamepad   = _VX360Gamepad() # This variable is used to control the joystick.
 # cap = cv2.VideoCapture(video_path)
 
 cap = cv2.VideoCapture(0)
-cap.set(3, 640); cap.set(4, 480)
+cap.set(3, 1280); cap.set(4, 720)
 
 # You NO LONGER need cap.set() for a pre-recorded video.
 # The video's resolution is already fixed. These lines will have no effect.
@@ -587,7 +593,57 @@ with mp_pose.Pose(static_image_mode=False, min_detection_confidence=0.5, model_c
             rw_pt = (rw_x, rw_y) if (rw_x is not None and rw_y is not None) else None
             panel = akv_viz.update_and_render(points=akv_points, now=now_t, lw=lw_pt, rw=rw_pt)
             cv2.imshow(AKV_WINDOW_NAME, panel)
-        cv2.imshow("Control gated by other hand open/close (q to quit)", frame)
+        cv2.imshow("Waving Over It (q to quit)", frame)
+
+        # ---- One-time automatic tiling of game + OpenCV window (Windows) ----
+        if AUTO_TILE_WINDOWS and 'WINDOWS_TILED' not in globals():
+            try:
+                import platform
+                if platform.system() == 'Windows':
+                    import time as _t
+                    import pygetwindow as gw
+                    import pyautogui as pag
+                    _t.sleep(0.25)  # brief delay so window manager registers window size
+
+                    def _find(sub):
+                        sub_l = sub.lower()
+                        for wdw in gw.getAllWindows():
+                            if sub_l in wdw.title.lower():
+                                return wdw
+                        return None
+
+                    left_wdw  = _find(TILE_LEFT_TITLE_SUB)
+                    right_wdw = _find(TILE_RIGHT_TITLE_SUB)
+                    if left_wdw and right_wdw:
+                        sw, sh = pag.size()
+                        half_w = (sw - TILE_GAP_PIX) // 2
+                        layout = ((left_wdw, 0), (right_wdw, half_w + TILE_GAP_PIX))
+                        for wdw, xpos in layout:
+                            try:
+                                if wdw.isMinimized: wdw.restore()
+                                if wdw.isMaximized: wdw.unmaximize()
+                            except Exception:
+                                pass
+                        for wdw, xpos in layout:
+                            # Separate loops so both are restored before moving
+                            try:
+                                wdw.resizeTo(half_w, sh)
+                            except Exception:
+                                pass
+                            try:
+                                wdw.moveTo(xpos, 0)
+                            except Exception:
+                                pass
+                        WINDOWS_TILED = True
+                        print(f"[INFO] Auto tiled windows: '{left_wdw.title}' | '{right_wdw.title}'")
+                    else:
+                        # If either window missing, silently retry next frame (no flag set)
+                        pass
+                else:
+                    WINDOWS_TILED = True  # disable further attempts on non-Windows
+            except Exception as _e:
+                print(f"[WARN] Auto-tiling failed: {_e}")
+                WINDOWS_TILED = True  # prevent repeated failure spam
 
 cap.release()
 cv2.destroyAllWindows()

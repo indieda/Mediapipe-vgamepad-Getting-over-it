@@ -85,6 +85,10 @@ REPLAY_COMPRESS      = 0.15
 REPLAY_GAIN          = 1.8
 DEADZONE_RADIUS      = 0.0015
 
+# Posture confidence averaging
+POSTURE_CONF_HISTORY_SEC = 2.0   # time window for simple moving average (seconds)
+POSTURE_CONF_EMA_ALPHA   = 0.2   # EMA smoothing factor (0..1)
+
 # —— Hands label related —— 
 SWAP_POSE_HANDS      = True         # Swap left/right pose skeleton (for left hand raise detection)
 SWAP_HANDS_LABEL     = False         # Swap Hands Left/Right label overall (no correction)
@@ -102,6 +106,14 @@ CALIB_POINTS = 32                    # number of dotted points around circle
 CALIB_RADIUS_RATIO = 0.35            # radius relative to min(frame_w,frame_h)
 CALIB_TOL_PIX = 40                   # tolerance (pixels) from ideal circle to count as visited
 CALIB_COMPLETE_THRESHOLD = 0.85      # fraction of points that must be visited to finish
+
+# ---- Optional left-hand hover target during calibration ----
+LEFT_HOVER_ENABLED    = True         # draw a hover circle for left hand while calibrating
+LEFT_HOVER_X_RATIO    = 0.07         # horizontal position (fraction of width from left)
+LEFT_HOVER_Y_RATIO    = 0.50         # vertical position (fraction of height from top)
+LEFT_HOVER_RADIUS_PX  = 26           # visual circle radius
+LEFT_HOVER_TOL_PIX    = 50           # distance threshold to consider hovered (center to wrist)
+LEFT_HOVER_LABEL      = 'Left hover'
 
 # ================== Initialization ==================
 mp_pose   = mp.solutions.pose
@@ -135,6 +147,10 @@ if AKV_HUD and _AKV_AVAILABLE:
 r_hist = deque()
 rvx_ema = 0.0
 rvy_ema = 0.0
+
+# Posture confidence history and EMA
+conf_hist = deque()
+conf_ema = None
 
 # Calibration runtime state
 calib_done = False
@@ -358,6 +374,44 @@ with mp_pose.Pose(static_image_mode=False, min_detection_confidence=0.5, model_c
 
             now_t = time.time()
 
+            # ---- Posture confidence: average landmark visibility of key torso/limb points ----
+            posture_conf = None
+            if res_pose.pose_landmarks is not None:
+                lm = res_pose.pose_landmarks.landmark
+                # choose landmarks indicative of a valid posture/visibility
+                keys = [
+                    mp_pose.PoseLandmark.LEFT_SHOULDER, mp_pose.PoseLandmark.RIGHT_SHOULDER,
+                    mp_pose.PoseLandmark.LEFT_HIP, mp_pose.PoseLandmark.RIGHT_HIP,
+                    mp_pose.PoseLandmark.LEFT_ELBOW, mp_pose.PoseLandmark.RIGHT_ELBOW,
+                    mp_pose.PoseLandmark.LEFT_WRIST, mp_pose.PoseLandmark.RIGHT_WRIST,
+                    mp_pose.PoseLandmark.NOSE
+                ]
+                vis_vals = []
+                for k in keys:
+                    v = getattr(lm[k], 'visibility', None)
+                    if v is not None:
+                        vis_vals.append(float(v))
+                if vis_vals:
+                    posture_conf = float(sum(vis_vals) / len(vis_vals))
+                else:
+                    posture_conf = None
+
+            # maintain a time-windowed history and EMA for the posture confidence
+            if posture_conf is not None:
+                conf_hist.append((now_t, posture_conf))
+                # pop old entries beyond window
+                while conf_hist and (now_t - conf_hist[0][0]) > POSTURE_CONF_HISTORY_SEC:
+                    conf_hist.popleft()
+                # simple moving average over the deque
+                pose_conf_avg = float(sum(v for (_, v) in conf_hist) / len(conf_hist)) if conf_hist else posture_conf
+                # EMA update
+                if conf_ema is None:
+                    conf_ema = posture_conf
+                else:
+                    conf_ema = POSTURE_CONF_EMA_ALPHA * posture_conf + (1.0 - POSTURE_CONF_EMA_ALPHA) * conf_ema
+            else:
+                pose_conf_avg = None
+
              # ----------------- Calibration logic (mark visited sectors) -----------------
             if CALIB_ENABLED: #and not calib_done: #TODO Currently doesn't remove calibration screen: 
                 # compute center & radius in pixels
@@ -372,6 +426,26 @@ with mp_pose.Pose(static_image_mode=False, min_detection_confidence=0.5, model_c
                     py = int(cy + radius * math.sin(ang))
                     color = (0, 200, 0) if calib_visited[idx] else (200, 200, 255)
                     cv2.circle(frame, (px, py), 4, color, -1)
+
+                # ---- Left-hand hover target (only during calibration) ----
+                if LEFT_HOVER_ENABLED:
+                    lh_cx = int(w * LEFT_HOVER_X_RATIO)
+                    lh_cy = int(h * LEFT_HOVER_Y_RATIO)
+                    # Determine hover state using current left wrist position (lw_x, lw_y normalized 0..1)
+                    left_hovered = False
+                    if lw_x is not None and lw_y is not None:
+                        lw_px = int(max(0.0, min(1.0, lw_x)) * w)
+                        lw_py = int(max(0.0, min(1.0, lw_y)) * h)
+                        dist = math.hypot(lw_px - lh_cx, lw_py - lh_cy)
+                        if dist <= LEFT_HOVER_TOL_PIX:
+                            left_hovered = True
+                    hover_color = (0, 220, 0) if left_hovered else (180, 180, 255)
+                    # Draw outer ring and filled center dot
+                    cv2.circle(frame, (lh_cx, lh_cy), LEFT_HOVER_RADIUS_PX, hover_color, 2)
+                    cv2.circle(frame, (lh_cx, lh_cy), max(6, LEFT_HOVER_RADIUS_PX//4), hover_color, -1)
+                    # Label (slightly to the right)
+                    cv2.putText(frame, LEFT_HOVER_LABEL, (lh_cx + LEFT_HOVER_RADIUS_PX + 8, lh_cy + 6),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, hover_color, 1, cv2.LINE_AA)
 
                 # instruction text (render multiple lines so text doesn't overflow past the frame)
                 inst = "Wave your right hand in a circle to calibrate.\nCover the dotted ring."
@@ -485,6 +559,22 @@ with mp_pose.Pose(static_image_mode=False, min_detection_confidence=0.5, model_c
                             (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.60, (255,255,0), 2)
             cv2.putText(frame, f"Right=open -> control (gated by {GESTURE_HAND_LABEL}) | Left up -> record 8s -> replay",
                         (10, 74), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255,255,255), 2)
+
+            # Posture confidence HUD: instantaneous, SMA (history), and EMA
+            try:
+                inst_txt = f"{posture_conf:.2f}" if posture_conf is not None else "?"
+            except NameError:
+                inst_txt = "?"
+            try:
+                avg_txt = f"{pose_conf_avg:.2f}" if pose_conf_avg is not None else "?"
+            except NameError:
+                avg_txt = "?"
+            try:
+                ema_txt = f"{conf_ema:.2f}" if conf_ema is not None else "?"
+            except NameError:
+                ema_txt = "?"
+            cv2.putText(frame, f"PoseConf inst:{inst_txt} avg:{avg_txt} ema:{ema_txt}",
+                        (10, 98), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0,0,0), 2, cv2.LINE_AA)
 
         # This is a separate window for Arm Kinematics Visualization (if enabled and available)
         if akv_viz is not None:

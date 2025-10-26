@@ -115,6 +115,16 @@ LEFT_HOVER_RADIUS_PX  = 26           # visual circle radius
 LEFT_HOVER_TOL_PIX    = 50           # distance threshold to consider hovered (center to wrist)
 LEFT_HOVER_LABEL      = 'Left hover'
 
+# ---- Right-side hover hotspot to toggle pose hand swap ----
+RIGHT_SWAP_HOVER_ENABLED = True     # draw a hover circle on the right; holding inside toggles SWAP_POSE_HANDS
+RIGHT_SWAP_X_RATIO        = 0.93    # horizontal position (fraction of width from left)
+RIGHT_SWAP_Y_RATIO        = 0.50    # vertical position (fraction of height from top)
+RIGHT_SWAP_RADIUS_PX      = 28      # visual circle radius
+RIGHT_SWAP_TOL_PIX        = 54      # distance threshold to consider hovered (center to wrist)
+RIGHT_SWAP_HOLD_SEC       = 1.0     # how long to hold inside to trigger a toggle
+RIGHT_SWAP_COOLDOWN_SEC   = 1.5     # cooldown after a toggle to avoid rapid flipping
+RIGHT_SWAP_LABEL          = 'Swap Pose Hands'
+
 # ===== Window layout options =====
 AUTO_TILE_WINDOWS     = True         # Attempt to tile the game window and this OpenCV window side-by-side (Windows only)
 TILE_LEFT_TITLE_SUB   = "Getting Over It"   # substring of the game window title
@@ -175,6 +185,10 @@ next_tick = time.perf_counter()
 # Hand gesture hysteresis state & debug
 gesture_open_state = False
 last_openness = None
+
+# Hover-to-toggle state for right-side swap hotspot
+swap_hover_t0 = None          # when the wrist entered the hotspot (None if not hovering)
+swap_last_toggle_t = 0.0      # last time we toggled SWAP_POSE_HANDS (for cooldown)
 
 # ================== Utility functions ==================
 def clamp(v, lo, hi): return max(lo, min(hi, v))
@@ -418,6 +432,58 @@ with mp_pose.Pose(static_image_mode=False, min_detection_confidence=0.5, model_c
             else:
                 pose_conf_avg = None
 
+            # ---- Right-side hover hotspot to toggle SWAP_POSE_HANDS (always available when HUD is on) ----
+            if HUD and RIGHT_SWAP_HOVER_ENABLED:
+                sh_cx = int(w * RIGHT_SWAP_X_RATIO)
+                sh_cy = int(h * RIGHT_SWAP_Y_RATIO)
+
+                # Determine hover state using either wrist (whichever is visible/available)
+                hovered = False
+                if rw_x is not None and rw_y is not None:
+                    rw_px = int(clamp(rw_x, 0.0, 1.0) * w)
+                    rw_py = int(clamp(rw_y, 0.0, 1.0) * h)
+                    if math.hypot(rw_px - sh_cx, rw_py - sh_cy) <= RIGHT_SWAP_TOL_PIX:
+                        hovered = True
+                if (not hovered) and (lw_x is not None and lw_y is not None):
+                    lw_px = int(clamp(lw_x, 0.0, 1.0) * w)
+                    lw_py = int(clamp(lw_y, 0.0, 1.0) * h)
+                    if math.hypot(lw_px - sh_cx, lw_py - sh_cy) <= RIGHT_SWAP_TOL_PIX:
+                        hovered = True
+
+                # Visual feedback: color and progress arc while holding
+                base_color = (180, 180, 255)
+                hot_color  = (0, 220, 0)
+                col = hot_color if hovered else base_color
+                cv2.circle(frame, (sh_cx, sh_cy), RIGHT_SWAP_RADIUS_PX, col, 2)
+                cv2.circle(frame, (sh_cx, sh_cy), max(5, RIGHT_SWAP_RADIUS_PX//4), col, -1)
+                label = f"{RIGHT_SWAP_LABEL}: {'ON' if SWAP_POSE_HANDS else 'OFF'}"
+                # place label above or below depending on space; here we place slightly below-right
+                cv2.putText(frame, label,
+                            (max(10, sh_cx - RIGHT_SWAP_RADIUS_PX - 220), sh_cy + RIGHT_SWAP_RADIUS_PX + 16),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, col, 1, cv2.LINE_AA)
+
+                if hovered:
+                    if swap_hover_t0 is None:
+                        swap_hover_t0 = now_t
+                    # Draw progress arc indicating hold time
+                    prog = clamp((now_t - swap_hover_t0) / RIGHT_SWAP_HOLD_SEC, 0.0, 1.0)
+                    if prog > 0.0:
+                        try:
+                            ang = int(360 * prog)
+                            cv2.ellipse(frame, (sh_cx, sh_cy),
+                                        (RIGHT_SWAP_RADIUS_PX + 3, RIGHT_SWAP_RADIUS_PX + 3),
+                                        0, -90, -90 + ang, col, 2, cv2.LINE_AA)
+                        except Exception:
+                            pass
+                    # Toggle when held long enough and out of cooldown
+                    if (now_t - swap_hover_t0) >= RIGHT_SWAP_HOLD_SEC and (now_t - swap_last_toggle_t) >= RIGHT_SWAP_COOLDOWN_SEC:
+                        SWAP_POSE_HANDS = not SWAP_POSE_HANDS
+                        swap_last_toggle_t = now_t
+                        swap_hover_t0 = None
+                        print(f"[INFO] SWAP_POSE_HANDS toggled to {SWAP_POSE_HANDS} via right hotspot")
+                else:
+                    swap_hover_t0 = None
+
              # ----------------- Calibration logic (mark visited sectors) -----------------
             if CALIB_ENABLED: #and not calib_done: #TODO Currently doesn't remove calibration screen: 
                 # compute center & radius in pixels
@@ -499,7 +565,8 @@ with mp_pose.Pose(static_image_mode=False, min_detection_confidence=0.5, model_c
                 # Check that the left hand is raised and the left hand is closed to start recording.
                 if l_hand_up and not hand_open and (rw_x is not None):
                     #record_buf = [(now_t, rw_x, rw_y)]; rec_t0 = now_t
-                    state = "RECORD"; record_buf = [(now_t, rw_x, rw_y)]; rec_t0 = now_t
+                    #TODO: Leave this silenced for now... #state = "RECORD"; record_buf = [(now_t, rw_x, rw_y)]; rec_t0 = now_t
+                    pass
 
             elif state == "RECORD":
                 print(now_t - rec_t0)

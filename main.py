@@ -113,7 +113,7 @@ LEFT_HOVER_X_RATIO    = 0.07         # horizontal position (fraction of width fr
 LEFT_HOVER_Y_RATIO    = 0.50         # vertical position (fraction of height from top)
 LEFT_HOVER_RADIUS_PX  = 26           # visual circle radius
 LEFT_HOVER_TOL_PIX    = 50           # distance threshold to consider hovered (center to wrist)
-LEFT_HOVER_LABEL      = 'Left hover'
+LEFT_HOVER_LABEL      = 'Hover passive hand'
 
 # ---- Right-side hover hotspot to toggle pose hand swap ----
 RIGHT_SWAP_HOVER_ENABLED = True     # draw a hover circle on the right; holding inside toggles SWAP_POSE_HANDS
@@ -189,6 +189,10 @@ last_openness = None
 # Hover-to-toggle state for right-side swap hotspot
 swap_hover_t0 = None          # when the wrist entered the hotspot (None if not hovering)
 swap_last_toggle_t = 0.0      # last time we toggled SWAP_POSE_HANDS (for cooldown)
+
+# Visual layout state: start with passive hover on LEFT and swap hotspot on RIGHT
+hotspot_flipped = False       # False = normal (hover-left, swap-right); True = swapped sides
+prev_swap_pose_hands = SWAP_POSE_HANDS
 
 # ================== Utility functions ==================
 def clamp(v, lo, hi): return max(lo, min(hi, v))
@@ -348,6 +352,12 @@ with mp_pose.Pose(static_image_mode=False, min_detection_confidence=0.5, model_c
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         res_pose  = pose.process(rgb)
         res_hands = hands.process(rgb)
+        # Detect external toggles of SWAP_POSE_HANDS (if changed elsewhere), and mirror the UI layout accordingly
+        if SWAP_POSE_HANDS != prev_swap_pose_hands:
+            hotspot_flipped = not hotspot_flipped
+            prev_swap_pose_hands = SWAP_POSE_HANDS
+            # Optional: log this external change
+            print(f"[INFO] Detected SWAP_POSE_HANDS change -> {SWAP_POSE_HANDS}; UI flipped={hotspot_flipped}")
         
         # If Mediapipe Pose detected a person, extract post landmarks and left/right wrist
         mp_pose_present = res_pose.pose_landmarks is not None
@@ -355,6 +365,9 @@ with mp_pose.Pose(static_image_mode=False, min_detection_confidence=0.5, model_c
         rw_x = rw_y = lw_x = lw_y = 0.5 #TODO: Check if None would be better for the logic below.
         # Initialize left-hand-up flag
         l_hand_up = False
+        # Ensure these are always defined for HUD and logic even if pose/hands not detected this frame
+        hand_open = None
+        now_t = time.time()
 
         # If there is indeed a person in the frame, we start the following:
         if mp_pose_present:
@@ -391,8 +404,6 @@ with mp_pose.Pose(static_image_mode=False, min_detection_confidence=0.5, model_c
 
             # "Open/fist" comes from GESTURE_HAND_LABEL (default uses left hand as switch)
             hand_open = hand_is_open(res_hands, w, h, target_label=GESTURE_HAND_LABEL)  # True/False/None
-
-            now_t = time.time()
 
             # ---- Posture confidence: average landmark visibility of key torso/limb points ----
             posture_conf = None
@@ -434,8 +445,13 @@ with mp_pose.Pose(static_image_mode=False, min_detection_confidence=0.5, model_c
 
             # ---- Right-side hover hotspot to toggle SWAP_POSE_HANDS (always available when HUD is on) ----
             if HUD and RIGHT_SWAP_HOVER_ENABLED:
-                sh_cx = int(w * RIGHT_SWAP_X_RATIO)
-                sh_cy = int(h * RIGHT_SWAP_Y_RATIO)
+                # Use visual flip state to place hotspot (independent of SWAP_POSE_HANDS default)
+                if hotspot_flipped:
+                    sh_cx = int(w * LEFT_HOVER_X_RATIO)
+                    sh_cy = int(h * LEFT_HOVER_Y_RATIO)
+                else:
+                    sh_cx = int(w * RIGHT_SWAP_X_RATIO)
+                    sh_cy = int(h * RIGHT_SWAP_Y_RATIO)
 
                 # Determine hover state using either wrist (whichever is visible/available)
                 hovered = False
@@ -478,9 +494,11 @@ with mp_pose.Pose(static_image_mode=False, min_detection_confidence=0.5, model_c
                     # Toggle when held long enough and out of cooldown
                     if (now_t - swap_hover_t0) >= RIGHT_SWAP_HOLD_SEC and (now_t - swap_last_toggle_t) >= RIGHT_SWAP_COOLDOWN_SEC:
                         SWAP_POSE_HANDS = not SWAP_POSE_HANDS
+                        hotspot_flipped = not hotspot_flipped  # keep UI sides in sync with toggle
+                        prev_swap_pose_hands = SWAP_POSE_HANDS  # prevent next-frame external detector from double-flipping
                         swap_last_toggle_t = now_t
                         swap_hover_t0 = None
-                        print(f"[INFO] SWAP_POSE_HANDS toggled to {SWAP_POSE_HANDS} via right hotspot")
+                        print(f"[INFO] SWAP_POSE_HANDS toggled to {SWAP_POSE_HANDS} via right hotspot; UI flipped={hotspot_flipped}")
                 else:
                     swap_hover_t0 = None
 
@@ -501,8 +519,13 @@ with mp_pose.Pose(static_image_mode=False, min_detection_confidence=0.5, model_c
 
                 # ---- Left-hand hover target (only during calibration) ----
                 if LEFT_HOVER_ENABLED:
-                    lh_cx = int(w * LEFT_HOVER_X_RATIO)
-                    lh_cy = int(h * LEFT_HOVER_Y_RATIO)
+                    # Use visual flip state to place passive hover circle
+                    if hotspot_flipped:
+                        lh_cx = int(w * RIGHT_SWAP_X_RATIO)
+                        lh_cy = int(h * RIGHT_SWAP_Y_RATIO)
+                    else:
+                        lh_cx = int(w * LEFT_HOVER_X_RATIO)
+                        lh_cy = int(h * LEFT_HOVER_Y_RATIO)
                     # Determine hover state using current left wrist position (lw_x, lw_y normalized 0..1)
                     left_hovered = False
                     if lw_x is not None and lw_y is not None:
@@ -515,8 +538,12 @@ with mp_pose.Pose(static_image_mode=False, min_detection_confidence=0.5, model_c
                     # Draw outer ring and filled center dot
                     cv2.circle(frame, (lh_cx, lh_cy), LEFT_HOVER_RADIUS_PX, hover_color, 2)
                     cv2.circle(frame, (lh_cx, lh_cy), max(6, LEFT_HOVER_RADIUS_PX//4), hover_color, -1)
-                    # Label (slightly to the right)
-                    cv2.putText(frame, LEFT_HOVER_LABEL, (lh_cx + LEFT_HOVER_RADIUS_PX + 8, lh_cy + 6),
+                    # Label placement: to right when on left half; to left when on right half
+                    if lh_cx <= w * 0.5:
+                        label_pt = (lh_cx + LEFT_HOVER_RADIUS_PX + 8, lh_cy + 6)
+                    else:
+                        label_pt = (max(10, lh_cx - LEFT_HOVER_RADIUS_PX - 160), lh_cy + 6)
+                    cv2.putText(frame, LEFT_HOVER_LABEL, label_pt,
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, hover_color, 1, cv2.LINE_AA)
 
                 # instruction text (render multiple lines so text doesn't overflow past the frame)

@@ -47,6 +47,51 @@ except Exception as e:
     _AKV_AVAILABLE = False
     print(f"[WARNING] Failed to import arm_kinematics_viz: {e}")
 
+
+# —— DataBridge（可选，用于 Streamlit UI） ——
+BRIDGE_FRAME_INTERVAL = 1.0 / 30.0
+BRIDGE_CHART_INTERVAL = 0.25
+
+_bridge_manager = None
+_bridge = None
+_bridge_failed = False
+_bridge_video_tick = 0.0
+_bridge_chart_tick = 0.0
+
+try:
+    from data_bridge import connect_to_bridge_from_env, DataBridgeConnectionError
+
+    try:
+        _bridge_manager, _bridge = connect_to_bridge_from_env()
+        print("[信息] DataBridge 已连接，实时数据将推送至监控 UI。")
+        try:
+            _bridge.set_mock_mode(False)
+        except Exception:
+            pass
+    except DataBridgeConnectionError as e:
+        print(f"[警告] 无法连接 DataBridge：{e}")
+        _bridge_manager = None
+        _bridge = None
+except Exception as e:
+    print(f"[警告] DataBridge 模块不可用：{e}")
+    _bridge_manager = None
+    _bridge = None
+
+
+def _bridge_try_update(data_type: str, payload):
+    global _bridge, _bridge_failed
+    if _bridge is None:
+        return
+    try:
+        _bridge.update_data(data_type, payload)
+    except Exception as exc:
+        if not _bridge_failed:
+            print(f"[警告] DataBridge 更新失败：{exc}")
+        _bridge_failed = True
+        _bridge = None
+
+
+
 # Uncomment the section below when running on macOS without MediaPipe installed.
 # def start_arm_viz(cam: int = 0,
 #                   width: int = 640,

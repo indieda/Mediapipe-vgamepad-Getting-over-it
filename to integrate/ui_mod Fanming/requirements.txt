@@ -1,0 +1,7 @@
+numpy==1.26.4
+opencv-python
+mediapipe==0.10.21
+#vgamepad==0.1.0
+matplotlib==3.8.4
+pillow==10.4.0
+streamlit==1.38.0

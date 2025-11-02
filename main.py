@@ -478,6 +478,39 @@ with mp_pose.Pose(static_image_mode=False, min_detection_confidence=0.5, model_c
                 cv2.circle(frame, (int(LW.x*w), int(LW.y*h)), 6, (  0,255,255), -1)
                 cv2.circle(frame, (int(LS.x*w), int(LS.y*h)), 6, (255,255,  0), -1)
 
+            # Data bridge updates
+            
+            try:
+                left_shoulder_pt, left_shoulder_vis = mp_point(lm, mp_pose.PoseLandmark.LEFT_SHOULDER)
+                left_elbow_pt, left_elbow_vis = mp_point(lm, mp_pose.PoseLandmark.LEFT_ELBOW)
+                left_wrist_pt, left_wrist_vis = mp_point(lm, mp_pose.PoseLandmark.LEFT_WRIST)
+                left_hip_pt, left_hip_vis = mp_point(lm, mp_pose.PoseLandmark.LEFT_HIP)
+                right_shoulder_pt, right_shoulder_vis = mp_point(lm, mp_pose.PoseLandmark.RIGHT_SHOULDER)
+                right_elbow_pt, right_elbow_vis = mp_point(lm, mp_pose.PoseLandmark.RIGHT_ELBOW)
+                right_wrist_pt, right_wrist_vis = mp_point(lm, mp_pose.PoseLandmark.RIGHT_WRIST)
+                right_hip_pt, right_hip_vis = mp_point(lm, mp_pose.PoseLandmark.RIGHT_HIP)
+            except Exception:
+                zero = np.zeros(3, dtype=np.float64)
+                left_shoulder_pt = left_elbow_pt = left_wrist_pt = left_hip_pt = zero
+                right_shoulder_pt = right_elbow_pt = right_wrist_pt = right_hip_pt = zero
+                left_shoulder_vis = left_elbow_vis = left_wrist_vis = left_hip_vis = 0.0
+                right_shoulder_vis = right_elbow_vis = right_wrist_vis = right_hip_vis = 0.0
+
+            if min(left_shoulder_vis, left_elbow_vis, left_wrist_vis) > 0.4:
+                angle = max(0.0, min(180.0, compute_angle_deg(left_shoulder_pt, left_elbow_pt, left_wrist_pt)))
+                current_joint_metrics["left_elbow"] = angle
+                current_line_metrics["left_elbow_angle"] = angle
+            if min(left_hip_vis, left_shoulder_vis, left_elbow_vis) > 0.4:
+                current_joint_metrics["left_shoulder"] = max(0.0, min(180.0, compute_angle_deg(left_hip_pt, left_shoulder_pt, left_elbow_pt)))
+
+            if min(right_shoulder_vis, right_elbow_vis, right_wrist_vis) > 0.4:
+                angle = max(0.0, min(180.0, compute_angle_deg(right_shoulder_pt, right_elbow_pt, right_wrist_pt)))
+                current_joint_metrics["right_elbow"] = angle
+                current_line_metrics["right_elbow_angle"] = angle
+            if min(right_hip_vis, right_shoulder_vis, right_elbow_vis) > 0.4:
+                current_joint_metrics["right_shoulder"] = max(0.0, min(180.0, compute_angle_deg(right_hip_pt, right_shoulder_pt, right_elbow_pt)))
+
+            # End of sub section for data bridge updates.
             # "Open/fist" comes from GESTURE_HAND_LABEL (default uses left hand as switch)
             hand_open = hand_is_open(res_hands, w, h, target_label=GESTURE_HAND_LABEL)  # True/False/None
 

@@ -352,6 +352,29 @@ def replay_trajectory(buf, compress=0.15, gain=1.8):
     for _ in range(18):
         gamepad.left_joystick(x_value=0, y_value=0); gamepad.update(); time.sleep(0.005)
 
+
+def mp_point(lm, idx):
+    pt = lm[idx]
+    return np.array([float(pt.x), float(pt.y), float(getattr(pt, "z", 0.0))], dtype=np.float64), float(getattr(pt, "visibility", 1.0))
+
+
+def compute_angle_deg(a_pt, pivot_pt, c_pt):
+    ba = a_pt - pivot_pt
+    bc = c_pt - pivot_pt
+    norm_ba = np.linalg.norm(ba)
+    norm_bc = np.linalg.norm(bc)
+    if norm_ba < 1e-8 or norm_bc < 1e-8:
+        return 0.0
+    cos_angle = np.clip(np.dot(ba, bc) / (norm_ba * norm_bc), -1.0, 1.0)
+    return math.degrees(math.acos(cos_angle))
+
+def compute_speed_from_hist(hist):
+    if len(hist) < 2:
+        return 0.0
+    vx, vy = estimate_velocity(list(hist))
+    return math.hypot(vx, vy)
+
+
 # ---- Hands label getter ----
 def get_handedness_label(h):
     lbl = h.classification[0].label  # 'Left' or 'Right'

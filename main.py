@@ -241,6 +241,22 @@ next_tick = time.perf_counter()
 gesture_open_state = False
 last_openness = None
 
+
+# Data bridge
+last_joint_metrics = {
+    "left_elbow": 0.0,
+    "left_shoulder": 0.0,
+    "right_elbow": 0.0,
+    "right_shoulder": 0.0,
+}
+last_line_metrics = {
+    "left_wrist_speed": 0.0,
+    "right_wrist_speed": 0.0,
+    "left_elbow_angle": 0.0,
+    "right_elbow_angle": 0.0,
+}
+
+
 # Hover-to-toggle state for right-side swap hotspot
 swap_hover_t0 = None          # when the wrist entered the hotspot (None if not hovering)
 swap_last_toggle_t = 0.0      # last time we toggled SWAP_POSE_HANDS (for cooldown)
@@ -397,6 +413,11 @@ with mp_pose.Pose(static_image_mode=False, min_detection_confidence=0.5, model_c
     # ========== Infinite loop ==========
     i = 0
     while True:
+        # Data bridge
+        bridge_now_perf = time.perf_counter()
+        current_joint_metrics = dict(last_joint_metrics)
+        current_line_metrics = dict(last_line_metrics)
+
         i = i+1
         ok, frame = cap.read()
         if not ok: break
@@ -700,7 +721,49 @@ with mp_pose.Pose(static_image_mode=False, min_detection_confidence=0.5, model_c
                 # If output conditions not met or during recording/replay: can add smooth return to zero here
                 pass
             
-        
+
+        # Data bridge updates
+        if _bridge is not None:
+            if bridge_now_perf - _bridge_video_tick >= BRIDGE_FRAME_INTERVAL:
+                _bridge_try_update('frame', frame)
+                _bridge_video_tick = bridge_now_perf
+            if bridge_now_perf - _bridge_chart_tick >= BRIDGE_CHART_INTERVAL:
+                bar_payload = [
+                    {
+                        "id": key,
+                        "label": label,
+                        "value": current_joint_metrics[key],
+                        "timestamp": now_t,
+                    }
+                    for key, label in (
+                        ("left_elbow", "Left Elbow"),
+                        ("left_shoulder", "Left Shoulder"),
+                        ("right_elbow", "Right Elbow"),
+                        ("right_shoulder", "Right Shoulder"),
+                    )
+                ]
+                line_payload = [
+                    {
+                        "id": key,
+                        "label": label,
+                        "timestamp": now_t,
+                        "value": current_line_metrics[key],
+                    }
+                    for key, label in (
+                        ("left_wrist_speed", "Left Wrist Speed"),
+                        ("right_wrist_speed", "Right Wrist Speed"),
+                        ("left_elbow_angle", "Left Elbow Angle"),
+                        ("right_elbow_angle", "Right Elbow Angle"),
+                    )
+                ]
+                _bridge_try_update('bar', bar_payload)
+                _bridge_try_update('line', line_payload)
+                _bridge_chart_tick = bridge_now_perf
+
+        last_joint_metrics.update(current_joint_metrics)
+        last_line_metrics.update(current_line_metrics)
+
+
         # ===== Displays information on the top left corner of the HUD =====
         if HUD:
             open_txt = "?" if hand_open is None else ("Y" if hand_open else "n")

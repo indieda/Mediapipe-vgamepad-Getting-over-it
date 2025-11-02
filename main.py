@@ -14,6 +14,12 @@ from collections import deque
 import numpy as np
 import cv2
 import mediapipe as mp
+
+# Post session summary logging (from Rongxuan)
+from session_summary import SessionSummary
+
+
+
 # Optional import of vgamepad: Not available on macOS, fallback to empty implementation
 try:
     from vgamepad import VX360Gamepad as _VX360Gamepad
@@ -158,6 +164,10 @@ if AKV_HUD and _AKV_AVAILABLE:
     except Exception as e:
         akv_viz = None
         print(f"[WARNING] Failed to create ArmKinematicsVisualizer: {e}")
+
+
+# NC        
+summary = SessionSummary()
 
 # Right hand: real-time control history and EMA
 r_hist = deque()
@@ -687,6 +697,15 @@ with mp_pose.Pose(static_image_mode=False, min_detection_confidence=0.5, model_c
             rw_pt = (rw_x, rw_y) if (rw_x is not None and rw_y is not None) else None
             panel = akv_viz.update_and_render(points=akv_points, now=now_t, lw=lw_pt, rw=rw_pt)
             cv2.imshow(AKV_WINDOW_NAME, panel)
+
+            # === Update Session Summary ===
+            if akv_points:
+                ang = _akv.get_arm_angles(akv_points)
+                summary.update_angles(ang, now_t)
+
+            spd = akv_viz.kin.speeds()  # uses visualizer’s tracker
+            summary.update_speeds({'L_speed': spd.get('L_speed'),'R_speed': spd.get('R_speed')})
+
         cv2.imshow("Waving Over It (q to quit)", frame)
 
         # ---- One-time automatic tiling of game + OpenCV window (Windows) ----
@@ -740,4 +759,34 @@ with mp_pose.Pose(static_image_mode=False, min_detection_confidence=0.5, model_c
                 WINDOWS_TILED = True  # prevent repeated failure spam
 
 cap.release()
+
+
+print("=== Finalizing summary ===")
+try:
+    metrics = summary.finalize()
+    print("Metrics computed:", metrics.keys())
+except Exception as e:
+    print("ERROR while finalizing metrics:", e)
+    raise
+
+try:
+    panel = summary.render_summary(
+        metrics,
+        pdf_path=r".\session_report.pdf"
+    )
+    print("Panel result type:", type(panel))
+    if panel is None:
+        print("Render summary returned None!")
+    else:
+        print("Panel dtype/shape:", panel.dtype, panel.shape)
+        cv2.namedWindow("Session Summary", cv2.WINDOW_NORMAL)  # resizable window
+        cv2.imshow("Session Summary", panel)
+        print("Window created. Waiting for key...")
+        k = cv2.waitKey(0)
+        print("cv2.waitKey returned:", k)
+except Exception as e:
+    print("ERROR while rendering summary:", e)
+    raise
+
 cv2.destroyAllWindows()
+print("=== End of program ===")

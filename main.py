@@ -14,6 +14,10 @@ from collections import deque
 import numpy as np
 import cv2
 import mediapipe as mp
+import csv
+import os
+from itertools import zip_longest
+# ...existing code...
 
 # Post session summary logging (from Rongxuan)
 from session_summary import SessionSummary
@@ -924,11 +928,52 @@ with mp_pose.Pose(static_image_mode=False, min_detection_confidence=0.5, model_c
 
 cap.release()
 
+# ...existing code...
+def _flatten_dict(d, parent_key='', sep='.'):
+    out = {}
+    for k, v in (d or {}).items():
+        key = f"{parent_key}{sep}{k}" if parent_key else str(k)
+        if isinstance(v, dict):
+            out.update(_flatten_dict(v, key, sep=sep))
+        else:
+            out[key] = v
+    return out
+
+def save_metrics_csv(metrics: dict, path: str):
+    m = _flatten_dict(metrics)
+    # detect series columns (same-length lists/arrays)
+    def to_list(v):
+        if isinstance(v, np.ndarray): return v.tolist()
+        return v
+    series = {k: to_list(v) for k, v in m.items() if isinstance(v, (list, tuple, np.ndarray))}
+    lengths = {len(v) for v in series.values()}
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        if series and len(lengths) == 1:
+            # write time-series style table
+            scalar = {k: v for k, v in m.items() if k not in series}
+            if scalar:
+                for k, v in scalar.items():
+                    w.writerow([k, v])
+                w.writerow([])  # blank line between sections
+            headers = list(series.keys())
+            w.writerow(headers)
+            for row in zip_longest(*series.values(), fillvalue=""):
+                w.writerow(row)
+        else:
+            # simple key,value table
+            w.writerow(["metric", "value"])
+            for k, v in m.items():
+                w.writerow([k, to_list(v)])
+# ...existing code...
 
 print("=== Finalizing summary ===")
 try:
     metrics = summary.finalize()
     print("Metrics computed:", metrics.keys())
+    save_metrics_csv(metrics, r".\metrics.csv")
+    print("Saved metrics to CSV.")
 except Exception as e:
     print("ERROR while finalizing metrics:", e)
     raise

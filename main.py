@@ -180,6 +180,16 @@ RIGHT_SWAP_HOLD_SEC       = 1.0     # how long to hold inside to trigger a toggl
 RIGHT_SWAP_COOLDOWN_SEC   = 1.5     # cooldown after a toggle to avoid rapid flipping
 RIGHT_SWAP_LABEL          = 'Swap Pose Hands'
 
+# ---- UI label styling ----
+UI_LABEL_FONT_SCALE       = 0.80    # base font scale for labels
+UI_LABEL_THICKNESS        = 2       # base thickness (acts like bold when >=2)
+UI_LABEL_COLOR            = (255, 0, 0)   # Blue in BGR
+SWAP_STATUS_ON_FONT_SCALE = 1.05    # emphasized size for "ON"
+SWAP_STATUS_ON_THICKNESS  = 3       # emphasized thickness for "ON"
+SWAP_STATUS_ON_COLOR      = (255, 0, 0)   # Blue for ON
+SWAP_STATUS_OFF_COLOR     = (220, 220, 220)  # neutral gray for OFF
+HOTSPOT_SCALE             = 3.0     # scale circles (and hover tolerance) by this factor
+
 # ===== Window layout options =====
 AUTO_TILE_WINDOWS     = True         # Attempt to tile the game window and this OpenCV window side-by-side (Windows only)
 TILE_LEFT_TITLE_SUB   = "Getting Over It"   # substring of the game window title
@@ -198,7 +208,7 @@ gamepad   = _VX360Gamepad() # This variable is used to control the joystick.
 # cap = cv2.VideoCapture(video_path)
 
 cap = cv2.VideoCapture(0)
-cap.set(3, 1280); cap.set(4, 720)
+cap.set(3, 1280); cap.set(4, 720) # cap.set(3, 1280); # cap.set(4, 720)
 
 # You NO LONGER need cap.set() for a pre-recorded video.
 # The video's resolution is already fixed. These lines will have no effect.
@@ -591,28 +601,41 @@ with mp_pose.Pose(static_image_mode=False, min_detection_confidence=0.5, model_c
 
                 # Determine hover state using either wrist (whichever is visible/available)
                 hovered = False
+                eff_swap_tol = int(max(1, RIGHT_SWAP_TOL_PIX * HOTSPOT_SCALE))
                 if rw_x is not None and rw_y is not None:
                     rw_px = int(clamp(rw_x, 0.0, 1.0) * w)
                     rw_py = int(clamp(rw_y, 0.0, 1.0) * h)
-                    if math.hypot(rw_px - sh_cx, rw_py - sh_cy) <= RIGHT_SWAP_TOL_PIX:
+                    if math.hypot(rw_px - sh_cx, rw_py - sh_cy) <= eff_swap_tol:
                         hovered = True
                 if (not hovered) and (lw_x is not None and lw_y is not None):
                     lw_px = int(clamp(lw_x, 0.0, 1.0) * w)
                     lw_py = int(clamp(lw_y, 0.0, 1.0) * h)
-                    if math.hypot(lw_px - sh_cx, lw_py - sh_cy) <= RIGHT_SWAP_TOL_PIX:
+                    if math.hypot(lw_px - sh_cx, lw_py - sh_cy) <= eff_swap_tol:
                         hovered = True
 
                 # Visual feedback: color and progress arc while holding
                 base_color = (180, 180, 255)
                 hot_color  = (0, 220, 0)
                 col = hot_color if hovered else base_color
-                cv2.circle(frame, (sh_cx, sh_cy), RIGHT_SWAP_RADIUS_PX, col, 2)
-                cv2.circle(frame, (sh_cx, sh_cy), max(5, RIGHT_SWAP_RADIUS_PX//4), col, -1)
-                label = f"{RIGHT_SWAP_LABEL}: {'ON' if SWAP_POSE_HANDS else 'OFF'}"
-                # place label above or below depending on space; here we place slightly below-right
-                cv2.putText(frame, label,
-                            (max(10, sh_cx - RIGHT_SWAP_RADIUS_PX - 220), sh_cy + RIGHT_SWAP_RADIUS_PX + 16),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, col, 1, cv2.LINE_AA)
+                eff_swap_r = max(4, int(RIGHT_SWAP_RADIUS_PX * HOTSPOT_SCALE))
+                cv2.circle(frame, (sh_cx, sh_cy), eff_swap_r, col, 2)
+                cv2.circle(frame, (sh_cx, sh_cy), max(5, eff_swap_r//4), col, -1)
+                # Dynamic label styling: emphasize ON state in bold, larger, blue
+                status = 'ON' if SWAP_POSE_HANDS else 'OFF'
+                status_color = SWAP_STATUS_ON_COLOR if SWAP_POSE_HANDS else SWAP_STATUS_OFF_COLOR
+                status_scale = SWAP_STATUS_ON_FONT_SCALE if SWAP_POSE_HANDS else UI_LABEL_FONT_SCALE
+                status_thick = SWAP_STATUS_ON_THICKNESS if SWAP_POSE_HANDS else UI_LABEL_THICKNESS
+                label_prefix = RIGHT_SWAP_LABEL + ': '
+                # Render prefix (neutral) then status (emphasized), centered below the circle
+                (pref_w, pref_h), _ = cv2.getTextSize(label_prefix, cv2.FONT_HERSHEY_SIMPLEX, UI_LABEL_FONT_SCALE, UI_LABEL_THICKNESS)
+                (stat_w, stat_h), _ = cv2.getTextSize(status, cv2.FONT_HERSHEY_SIMPLEX, status_scale, status_thick)
+                total_w = pref_w + 4 + stat_w
+                base_pt = (max(10, int(sh_cx - total_w/2)), sh_cy + eff_swap_r + 18)
+                cv2.putText(frame, label_prefix, base_pt,
+                            cv2.FONT_HERSHEY_SIMPLEX, UI_LABEL_FONT_SCALE, UI_LABEL_COLOR, UI_LABEL_THICKNESS, cv2.LINE_AA)
+                status_pt = (base_pt[0] + pref_w + 4, base_pt[1])
+                cv2.putText(frame, status, status_pt,
+                            cv2.FONT_HERSHEY_SIMPLEX, status_scale, status_color, status_thick, cv2.LINE_AA)
 
                 if hovered:
                     if swap_hover_t0 is None:
@@ -623,7 +646,7 @@ with mp_pose.Pose(static_image_mode=False, min_detection_confidence=0.5, model_c
                         try:
                             ang = int(360 * prog)
                             cv2.ellipse(frame, (sh_cx, sh_cy),
-                                        (RIGHT_SWAP_RADIUS_PX + 3, RIGHT_SWAP_RADIUS_PX + 3),
+                                        (eff_swap_r + 3, eff_swap_r + 3),
                                         0, -90, -90 + ang, col, 2, cv2.LINE_AA)
                         except Exception:
                             pass
@@ -668,19 +691,19 @@ with mp_pose.Pose(static_image_mode=False, min_detection_confidence=0.5, model_c
                         lw_px = int(max(0.0, min(1.0, lw_x)) * w)
                         lw_py = int(max(0.0, min(1.0, lw_y)) * h)
                         dist = math.hypot(lw_px - lh_cx, lw_py - lh_cy)
-                        if dist <= LEFT_HOVER_TOL_PIX:
+                        eff_hover_tol = int(max(1, LEFT_HOVER_TOL_PIX * HOTSPOT_SCALE))
+                        if dist <= eff_hover_tol:
                             left_hovered = True
                     hover_color = (0, 220, 0) if left_hovered else (180, 180, 255)
-                    # Draw outer ring and filled center dot
-                    cv2.circle(frame, (lh_cx, lh_cy), LEFT_HOVER_RADIUS_PX, hover_color, 2)
-                    cv2.circle(frame, (lh_cx, lh_cy), max(6, LEFT_HOVER_RADIUS_PX//4), hover_color, -1)
-                    # Label placement: to right when on left half; to left when on right half
-                    if lh_cx <= w * 0.5:
-                        label_pt = (lh_cx + LEFT_HOVER_RADIUS_PX + 8, lh_cy + 6)
-                    else:
-                        label_pt = (max(10, lh_cx - LEFT_HOVER_RADIUS_PX - 160), lh_cy + 6)
+                    # Draw outer ring and filled center dot scaled
+                    eff_hover_r = max(6, int(LEFT_HOVER_RADIUS_PX * HOTSPOT_SCALE))
+                    cv2.circle(frame, (lh_cx, lh_cy), eff_hover_r, hover_color, 2)
+                    cv2.circle(frame, (lh_cx, lh_cy), max(8, eff_hover_r//4), hover_color, -1)
+                    # Center label below circle
+                    (lab_w, lab_h), _ = cv2.getTextSize(LEFT_HOVER_LABEL, cv2.FONT_HERSHEY_SIMPLEX, UI_LABEL_FONT_SCALE, UI_LABEL_THICKNESS)
+                    label_pt = (max(10, int(lh_cx - lab_w/2)), lh_cy + eff_hover_r + 18)
                     cv2.putText(frame, LEFT_HOVER_LABEL, label_pt,
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, hover_color, 1, cv2.LINE_AA)
+                                cv2.FONT_HERSHEY_SIMPLEX, UI_LABEL_FONT_SCALE, UI_LABEL_COLOR, UI_LABEL_THICKNESS, cv2.LINE_AA)
 
                 # instruction text (render multiple lines so text doesn't overflow past the frame)
                 inst = "Wave your right hand in a circle to calibrate.\nCover the dotted ring."
